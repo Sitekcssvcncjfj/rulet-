@@ -6,7 +6,9 @@ DB_NAME = os.getenv("DB_PATH", "/data/bot.db")
 
 
 def get_conn():
-    os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
+    db_dir = os.path.dirname(DB_NAME)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     return sqlite3.connect(DB_NAME)
 
 
@@ -163,6 +165,18 @@ def update_user_stats(chat_id, user_id, username, first_name, survived: bool):
     conn.close()
 
 
+def ensure_user(chat_id, user_id, username="", first_name=""):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+    INSERT OR IGNORE INTO user_stats
+    (chat_id, user_id, username, first_name, plays, survives, losses, streak, best_streak, revenge_wins, duel_wins, duel_losses)
+    VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0)
+    """, (chat_id, user_id, username, first_name))
+    conn.commit()
+    conn.close()
+
+
 def get_user_stats(chat_id, user_id):
     conn = get_conn()
     cur = conn.cursor()
@@ -290,14 +304,21 @@ def get_revenge_target(chat_id, loser_id):
     return row[0] if row else None
 
 
-def add_revenge_win(chat_id, user_id):
+def clear_revenge_target(chat_id, loser_id):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-    INSERT OR IGNORE INTO user_stats
-    (chat_id, user_id, username, first_name, plays, survives, losses, streak, best_streak, revenge_wins, duel_wins, duel_losses)
-    VALUES (?, ?, '', '', 0, 0, 0, 0, 0, 0, 0, 0)
-    """, (chat_id, user_id))
+    DELETE FROM revenge_targets
+    WHERE chat_id = ? AND loser_id = ?
+    """, (chat_id, loser_id))
+    conn.commit()
+    conn.close()
+
+
+def add_revenge_win(chat_id, user_id, username="", first_name=""):
+    ensure_user(chat_id, user_id, username, first_name)
+    conn = get_conn()
+    cur = conn.cursor()
     cur.execute("""
     UPDATE user_stats
     SET revenge_wins = revenge_wins + 1
@@ -344,20 +365,11 @@ def delete_duel(chat_id, challenger_id, target_id):
 
 
 def add_duel_result(chat_id, winner_id, loser_id):
+    ensure_user(chat_id, winner_id)
+    ensure_user(chat_id, loser_id)
+
     conn = get_conn()
     cur = conn.cursor()
-
-    cur.execute("""
-    INSERT OR IGNORE INTO user_stats
-    (chat_id, user_id, username, first_name, plays, survives, losses, streak, best_streak, revenge_wins, duel_wins, duel_losses)
-    VALUES (?, ?, '', '', 0, 0, 0, 0, 0, 0, 0, 0)
-    """, (chat_id, winner_id))
-
-    cur.execute("""
-    INSERT OR IGNORE INTO user_stats
-    (chat_id, user_id, username, first_name, plays, survives, losses, streak, best_streak, revenge_wins, duel_wins, duel_losses)
-    VALUES (?, ?, '', '', 0, 0, 0, 0, 0, 0, 0, 0)
-    """, (chat_id, loser_id))
 
     cur.execute("""
     UPDATE user_stats
