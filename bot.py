@@ -26,6 +26,7 @@ from db import (
     set_last_play,
     set_revenge_target,
     get_revenge_target,
+    clear_revenge_target,
     add_revenge_win,
     create_duel,
     get_duel_for_target,
@@ -86,8 +87,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /liderlik - grup sıralaması\n"
         "• /seriler - en iyi seriler\n"
         "• /olumsayisi - en çok ölenler\n"
-        "• /intikam @kisi - intikam hedefi belirle\n"
-        "• /duello @kisi - düello isteği gönder\n\n"
+        "• Bir mesajı yanıtlayıp /intikam\n"
+        "• Bir mesajı yanıtlayıp /duello\n\n"
         "Botu gruba ekleyip admin yapmayı unutma."
     )
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=start_menu())
@@ -97,7 +98,6 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_group(update.effective_chat.type):
         await update.message.reply_text("Bu panel grup içinde daha eğlenceli 😏", reply_markup=start_menu())
         return
-
     await update.message.reply_text("🎮 Oyun Paneli", reply_markup=panel_menu())
 
 
@@ -128,9 +128,9 @@ async def do_russian_roulette(message_source, user, chat, bot):
     set_last_play(chat.id, user.id)
 
     spin_msg = await message_source.reply_text(random_spin_message())
-    await asyncio.sleep(1.4)
-    await spin_msg.edit_text("🎯 Sonuç hesaplanıyor...")
     await asyncio.sleep(1.2)
+    await spin_msg.edit_text("🎯 Sonuç hesaplanıyor...")
+    await asyncio.sleep(1.0)
 
     survived = spin_chamber(settings["loss_chance"])
     update_user_stats(chat.id, user.id, user.username or "", user.first_name or "", survived)
@@ -148,11 +148,12 @@ async def do_russian_roulette(message_source, user, chat, bot):
             await bot.ban_chat_member(chat.id, user.id)
             await bot.unban_chat_member(chat.id, user.id, only_if_banned=True)
 
-            target_id = get_revenge_target(chat.id, user.id)
+            revenge_target_id = get_revenge_target(chat.id, user.id)
             revenge_text = ""
-            if target_id:
-                add_revenge_win(chat.id, target_id)
-                revenge_text = "\n⚔️ İntikam zinciri işlendi."
+            if revenge_target_id:
+                add_revenge_win(chat.id, revenge_target_id)
+                clear_revenge_target(chat.id, user.id)
+                revenge_text = "\n⚔️ İntikam yemini kayda geçti."
 
             await spin_msg.edit_text(
                 f"{random_lose_message()}\n\n"
@@ -196,7 +197,7 @@ async def istatistik(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"☠️ Ölüm: {stats['losses']}\n"
         f"🔥 Güncel seri: {stats['streak']}\n"
         f"🏅 En iyi seri: {stats['best_streak']}\n"
-        f"⚔️ İntikam kazancı: {stats['revenge_wins']}\n"
+        f"⚔️ İntikam puanı: {stats['revenge_wins']}\n"
         f"🥊 Düello galibiyet: {stats['duel_wins']}\n"
         f"💀 Düello mağlubiyet: {stats['duel_losses']}"
     )
@@ -271,59 +272,75 @@ async def olumsayisi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def intikam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
+    msg = update.message
 
     if not is_group(chat.type):
-        await update.message.reply_text("Bu komut grup içinde çalışır.")
+        await msg.reply_text("Bu komut grup içinde çalışır.")
         return
 
-    if not context.args:
-        await update.message.reply_text("Kullanım: /intikam @kullanici")
+    if not msg.reply_to_message:
+        await msg.reply_text("Bir kullanıcının mesajını yanıtlayıp /intikam yaz.")
         return
 
-    target_username = context.args[0].replace("@", "").lower()
-    set_revenge_target(chat.id, user.id, user.id)
-    await update.message.reply_text(
-        f"⚔️ {user.first_name}, intikam yemini etti.\n"
-        f"Hedef olarak @{target_username} seçildi.\n"
-        f"(Şimdilik kullanıcı adı bazlı gösterim, gelişmiş mention sistemi sonra eklenebilir.)"
-    )
+    target = msg.reply_to_message.from_user
+
+    if target.id == user.id:
+        await msg.reply_text("Kendinden intikam alamazsın 😅")
+        return
+
+    set_revenge_target(chat.id, user.id, target.id)
+    await msg.reply_text(f"⚔️ {user.first_name}, artık {target.first_name} için intikam yemininde bulundu!")
 
 
 async def duello(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
+    msg = update.message
 
     if not is_group(chat.type):
-        await update.message.reply_text("Bu komut grup içinde çalışır.")
+        await msg.reply_text("Bu komut grup içinde çalışır.")
         return
 
-    if not context.args:
-        await update.message.reply_text("Kullanım: /duello @kullanici")
+    if not msg.reply_to_message:
+        await msg.reply_text("Bir kullanıcının mesajını yanıtlayıp /duello yaz.")
         return
 
-    target_name = context.args[0]
-    create_duel(chat.id, user.id, user.first_name, 0, target_name)
-    await update.message.reply_text(
-        f"🥊 {user.first_name}, {target_name} kişisine düello çağrısı gönderdi!\n"
-        f"Hedef kişi /kabulet yazarak kabul edebilir."
+    target = msg.reply_to_message.from_user
+
+    if target.id == user.id:
+        await msg.reply_text("Kendine düello açamazsın 😅")
+        return
+
+    create_duel(chat.id, user.id, user.first_name, target.id, target.first_name)
+
+    await msg.reply_text(
+        f"🥊 {user.first_name}, {target.first_name} kişisine düello çağrısı gönderdi!\n"
+        f"{target.first_name} kabul etmek için kendi mesajına reply atıp /kabulet yazabilir."
     )
 
 
 async def kabulet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
+
+    if not is_group(chat.type):
+        await update.message.reply_text("Bu komut grup içinde çalışır.")
+        return
+
     duel = get_duel_for_target(chat.id, user.id)
 
     if not duel:
         await update.message.reply_text("Sana gelen aktif düello yok.")
         return
 
-    challenger_id, challenger_name, target_id, target_name = duel
+    challenger_id, challenger_name, _, target_name = duel
 
     spin_msg = await update.message.reply_text("🥊 Düello başlıyor...")
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1.2)
     await spin_msg.edit_text("🔫 İki taraf da tetiğe uzandı...")
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1.2)
+    await spin_msg.edit_text("🎯 Düello sonucu belirleniyor...")
+    await asyncio.sleep(1.0)
 
     challenger_survives = spin_chamber(0.5)
 
@@ -427,7 +444,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"☠️ Ölüm: {stats['losses']}\n"
             f"🔥 Güncel seri: {stats['streak']}\n"
             f"🏅 En iyi seri: {stats['best_streak']}\n"
-            f"⚔️ İntikam kazancı: {stats['revenge_wins']}\n"
+            f"⚔️ İntikam puanı: {stats['revenge_wins']}\n"
             f"🥊 Düello galibiyet: {stats['duel_wins']}\n"
             f"💀 Düello mağlubiyet: {stats['duel_losses']}"
         )
@@ -480,37 +497,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    try:
-        if not BOT_TOKEN:
-            raise ValueError("BOT_TOKEN bulunamadı.")
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN bulunamadı.")
 
-        init_db()
+    init_db()
 
-        app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("panel", panel))
-        app.add_handler(CommandHandler("oyna", oyna))
-        app.add_handler(CommandHandler("rusruleti", rusruleti))
-        app.add_handler(CommandHandler("rurulet", rusruleti))
-        app.add_handler(CommandHandler("istatistik", istatistik))
-        app.add_handler(CommandHandler("liderlik", liderlik))
-        app.add_handler(CommandHandler("seriler", seriler))
-        app.add_handler(CommandHandler("olumsayisi", olumsayisi))
-        app.add_handler(CommandHandler("intikam", intikam))
-        app.add_handler(CommandHandler("duello", duello))
-        app.add_handler(CommandHandler("kabulet", kabulet))
-        app.add_handler(CommandHandler("ac", ac))
-        app.add_handler(CommandHandler("kapat", kapat))
-        app.add_handler(CommandHandler("cooldown", cooldown))
-        app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("panel", panel))
+    app.add_handler(CommandHandler("oyna", oyna))
+    app.add_handler(CommandHandler("rusruleti", rusruleti))
+    app.add_handler(CommandHandler("rurulet", rusruleti))
+    app.add_handler(CommandHandler("istatistik", istatistik))
+    app.add_handler(CommandHandler("liderlik", liderlik))
+    app.add_handler(CommandHandler("seriler", seriler))
+    app.add_handler(CommandHandler("olumsayisi", olumsayisi))
+    app.add_handler(CommandHandler("intikam", intikam))
+    app.add_handler(CommandHandler("duello", duello))
+    app.add_handler(CommandHandler("kabulet", kabulet))
+    app.add_handler(CommandHandler("ac", ac))
+    app.add_handler(CommandHandler("kapat", kapat))
+    app.add_handler(CommandHandler("cooldown", cooldown))
+    app.add_handler(CallbackQueryHandler(button_handler))
 
-        print("Bot çalışıyor...")
-        app.run_polling(drop_pending_updates=True)
-
-    except Exception as e:
-        print(f"BOT KRİTİK HATA: {e}")
-        raise
+    print("Bot çalışıyor...")
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
