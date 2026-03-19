@@ -1,10 +1,12 @@
 import sqlite3
 import time
+import os
 
-DB_NAME = "bot.db"
+DB_NAME = os.getenv("DB_PATH", "/data/bot.db")
 
 
 def get_conn():
+    os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
     return sqlite3.connect(DB_NAME)
 
 
